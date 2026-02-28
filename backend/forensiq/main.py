@@ -22,11 +22,13 @@ logger = logging.getLogger(__name__)
 # ── Allowed CORS origins ────────────────────────────────
 _CORS_ORIGINS: list[str] = [
     "https://forensiq.vercel.app",
-    "https://*.vercel.app",        # preview deploys
+    "https://forensiq-theta.vercel.app",
     "http://localhost:8080",       # local vite dev
     "http://localhost:5173",
     "http://localhost:3000",
 ]
+# Regex covers all Vercel preview deploys (*.vercel.app)
+_CORS_ORIGIN_REGEX = r"https://.*\.vercel\.app"
 
 
 @asynccontextmanager
@@ -64,6 +66,7 @@ app = FastAPI(
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_CORS_ORIGINS,
+    allow_origin_regex=_CORS_ORIGIN_REGEX,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
