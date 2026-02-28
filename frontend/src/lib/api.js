@@ -3,7 +3,8 @@
  * All methods return parsed JSON or throw on error.
  */
 
-const BASE = "/api/v1";
+const API_ORIGIN = import.meta.env.VITE_API_URL || "";
+const BASE = `${API_ORIGIN}/api/v1`;
 
 async function request(path, options = {}) {
   const url = `${BASE}${path}`;

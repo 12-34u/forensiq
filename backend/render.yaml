@@ -1,0 +1,50 @@
+services:
+  - type: web
+    name: forensiq-api
+    runtime: python
+    region: oregon
+    plan: free
+    rootDir: backend
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn forensiq.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.12.0"
+      - key: PORT
+        generateValue: false
+        value: "10000"
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: GEMINI_MODEL
+        value: "gemini-2.0-flash"
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: OPENROUTER_API_KEY
+        sync: false
+      - key: OPENROUTER_MODEL
+        value: "openai/gpt-oss-120b:free"
+      - key: NEO4J_URI
+        sync: false
+      - key: NEO4J_USER
+        sync: false
+      - key: NEO4J_PASSWORD
+        sync: false
+      - key: NEO4J_DATABASE
+        value: "neo4j"
+      - key: MONGODB_URI
+        sync: false
+      - key: MONGODB_DATABASE
+        value: "forensiq"
+      - key: REDIS_URL
+        sync: false
+      - key: CACHE_TTL
+        value: "86400"
+      - key: JWT_SECRET
+        sync: false
+      - key: JWT_ALGORITHM
+        value: "HS256"
+      - key: JWT_EXPIRE_HOURS
+        value: "72"
+      - key: LOG_LEVEL
+        value: "INFO"
