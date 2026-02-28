@@ -1,3 +1,11 @@
 {
-  "rootDirectory": "frontend"
+  "buildCommand": "cd frontend && npm install && npm run build",
+  "outputDirectory": "frontend/dist",
+  "framework": null,
+  "installCommand": "echo 'skip root install'",
+  "rewrites": [
+    { "source": "/api/:path*", "destination": "https://forensiq-api.onrender.com/api/:path*" },
+    { "source": "/health", "destination": "https://forensiq-api.onrender.com/health" },
+    { "source": "/(.*)", "destination": "/index.html" }
+  ]
 }
