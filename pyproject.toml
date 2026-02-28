@@ -1,0 +1,53 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "forensiq"
+version = "0.1.0"
+description = "PageIndex RAG for UFDR forensic analysis – vector search via FAISS and entity graph via Neo4j"
+requires-python = ">=3.10"
+dependencies = [
+    "fastapi>=0.110",
+    "uvicorn[standard]>=0.27",
+    "pydantic>=2.6",
+    "pydantic-settings>=2.1",
+    "python-multipart>=0.0.9",
+    # Embeddings
+    "openai>=1.12",
+    # Vector store
+    "faiss-cpu>=1.7.4",
+    "numpy>=1.26",
+    # Graph
+    "neo4j>=5.17",
+    # XML / data
+    "lxml>=5.1",
+    "python-dateutil>=2.8",
+    # Google Drive
+    "google-api-python-client>=2.100",
+    "google-auth-oauthlib>=1.2",
+    "google-auth-httplib2>=0.2",
+    # Utilities
+    "rich>=13.7",
+    "aiofiles>=23.2",
+    "tiktoken>=0.6",
+    # Auth
+    "motor>=3.3",
+    "bcrypt>=4.0",
+    "pyjwt[crypto]>=2.8",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+    "httpx>=0.27",
+    "ruff>=0.3",
+]
+
+[tool.setuptools.packages.find]
+include = ["forensiq*", "config*"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
