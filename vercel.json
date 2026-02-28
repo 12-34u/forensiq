@@ -4,8 +4,8 @@
   "framework": null,
   "installCommand": "echo 'skip root install'",
   "rewrites": [
-    { "source": "/api/:path*", "destination": "https://forensiq-api.onrender.com/api/:path*" },
-    { "source": "/health", "destination": "https://forensiq-api.onrender.com/health" },
+    { "source": "/api/:path*", "destination": "https://forensiq-ojc8.onrender.com/api/:path*" },
+    { "source": "/health", "destination": "https://forensiq-ojc8.onrender.com/health" },
     { "source": "/(.*)", "destination": "/index.html" }
   ]
 }
