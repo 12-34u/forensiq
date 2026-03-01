@@ -66,7 +66,7 @@ export default function LoginPage() {
         </div>
 
         {/* Login Form */}
-        <form onSubmit={handleSubmit} className="space-y-4 rounded-2xl border border-border bg-card p-6">
+        <form onSubmit={handleSubmit} autoComplete="off" className="space-y-4 rounded-2xl border border-border bg-card p-6">
           <div>
             <label className="mb-1.5 block text-[10px] font-mono uppercase tracking-widest text-muted-foreground">
               Email Address
@@ -75,7 +75,8 @@ export default function LoginPage() {
               type="email"
               value={email}
               onChange={e => setEmail(e.target.value)}
-              placeholder="officer@forensiq.gov"
+              placeholder="you@example.com"
+              autoComplete="off"
               required
               className="w-full rounded-lg border border-border bg-background px-3 py-2.5 text-sm text-foreground placeholder:text-muted-foreground/50 focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
             />
@@ -95,7 +96,8 @@ export default function LoginPage() {
                 type={showPassword ? "text" : "password"}
                 value={password}
                 onChange={e => setPassword(e.target.value)}
-                placeholder="••••••••••"
+                placeholder="Enter your password"
+                autoComplete="new-password"
                 required
                 className="w-full rounded-lg border border-border bg-background px-3 py-2.5 pr-10 text-sm text-foreground placeholder:text-muted-foreground/50 focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
               />

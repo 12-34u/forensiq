@@ -81,7 +81,7 @@ export default function SignupPage() {
         </div>
 
         {/* Signup Form */}
-        <form onSubmit={handleSubmit} className="space-y-3 rounded-2xl border border-border bg-card p-6">
+        <form onSubmit={handleSubmit} autoComplete="off" className="space-y-3 rounded-2xl border border-border bg-card p-6">
           <div>
             <label className="mb-1 block text-[10px] font-mono uppercase tracking-widest text-muted-foreground">
               Full Name
@@ -90,7 +90,8 @@ export default function SignupPage() {
               type="text"
               value={name}
               onChange={e => setName(e.target.value)}
-              placeholder="Insp. Ravi Sharma"
+              placeholder="e.g. Jane Doe"
+              autoComplete="off"
               required
               className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground/50 focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
             />
@@ -104,7 +105,8 @@ export default function SignupPage() {
               type="email"
               value={email}
               onChange={e => setEmail(e.target.value)}
-              placeholder="officer@forensiq.gov"
+              placeholder="e.g. you@example.com"
+              autoComplete="off"
               required
               className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground/50 focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
             />
@@ -135,7 +137,8 @@ export default function SignupPage() {
                 type="text"
                 value={department}
                 onChange={e => setDepartment(e.target.value)}
-                placeholder="Cyber Crime Cell"
+              placeholder="e.g. Cyber Crime Division"
+              autoComplete="off"
                 className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground/50 focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
               />
             </div>
