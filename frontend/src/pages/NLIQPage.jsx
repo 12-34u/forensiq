@@ -115,11 +115,14 @@ export default function NLIQPage() {
 
       const allCitations = [...vectorCitations, ...graphCitations];
 
+      // If the backend says nothing was found, don't show citations
+      const noMatch = /no matching records|no.*found|could not find/i.test(result.answer || "");
+
       const assistantMsg = {
         id: `a-${Date.now()}`,
         role: "assistant",
         content: result.answer,
-        citations: allCitations,
+        citations: noMatch ? [] : allCitations,
         source: result.source,
         cacheKey: result.cache_key,
         timestamp: new Date().toISOString(),
