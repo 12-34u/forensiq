@@ -1,5 +1,5 @@
 import { createContext, useContext, useState, useEffect, useCallback } from "react";
-import { listProjects, getStats } from "@/lib/api";
+import { listMyProjects, getStats } from "@/lib/api";
 
 const CaseContext = createContext(null);
 
@@ -22,7 +22,7 @@ export function CaseProvider({ children }) {
     setLoading(true);
     try {
       const [projectList, sysStats] = await Promise.all([
-        listProjects().catch(() => []),
+        listMyProjects().catch(() => []),
         getStats().catch(() => null),
       ]);
       setProjects(projectList);

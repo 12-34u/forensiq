@@ -5,6 +5,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { useAuth } from "@/contexts/AuthContext";
 import { useTheme } from "@/hooks/use-theme";
 import { useCase } from "@/contexts/CaseContext";
+import { useChat } from "@/contexts/ChatContext";
 import { ingestUpload } from "@/lib/api";
 
 const processingSteps = [
@@ -22,6 +23,7 @@ export default function HomePage() {
   const { user, logout } = useAuth();
   const { theme, toggleTheme } = useTheme();
   const { projects, stats, loading: caseLoading, refresh, setActiveProject, setLastIngestResult } = useCase();
+  const { startConversation } = useChat();
 
   const [uploadState, setUploadState] = useState("idle");    // idle | uploading | processing | done | error
   const [fileName, setFileName] = useState("");
@@ -67,6 +69,14 @@ export default function HomePage() {
       setUploadState("done");
       await refresh();
 
+      // Auto-create a fresh chat for this newly ingested device
+      const deviceName = result.device_name || file.name.replace(/\.(ufdr|clbe|zip|tar|gz)$/i, "");
+      try {
+        await startConversation(`${deviceName} — Investigation`);
+      } catch {
+        // non-critical — chat will be created on first message
+      }
+
       setTimeout(() => {
         setActiveProject(result.extraction_id);
         navigate("/dashboard");
@@ -76,7 +86,7 @@ export default function HomePage() {
       setUploadState("error");
       setUploadError(err.message || "Ingest failed");
     }
-  }, [navigate, refresh, setActiveProject, setLastIngestResult]);
+  }, [navigate, refresh, setActiveProject, setLastIngestResult, startConversation]);
 
   const handleDrop = useCallback((e) => {
     e.preventDefault();
@@ -280,8 +290,11 @@ export default function HomePage() {
                       initial={{ opacity: 0, x: 10 }}
                       animate={{ opacity: 1, x: 0 }}
                       transition={{ delay: i * 0.05 }}
-                      onClick={() => {
+                      onClick={async () => {
                         setActiveProject(project.project_id);
+                        try {
+                          await startConversation(`${project.name} — Investigation`);
+                        } catch { /* non-critical */ }
                         navigate("/dashboard");
                       }}
                       className="group cursor-pointer rounded-xl border border-border bg-card p-4 transition-all hover:border-primary/40 hover:shadow-md"

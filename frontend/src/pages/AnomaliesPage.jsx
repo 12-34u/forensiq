@@ -5,7 +5,7 @@ import {
   TrendingUp, ExternalLink, ChevronDown, Search, Eye, Footprints,
   CheckCircle2, Loader2, RefreshCw
 } from "lucide-react";
-import { detectAnomalies, listProjects } from "@/lib/api";
+import { detectAnomalies } from "@/lib/api";
 import { useCase } from "@/contexts/CaseContext";
 
 const categoryConfig = {
@@ -35,22 +35,17 @@ export default function AnomaliesPage() {
   const [anomalyData, setAnomalyData] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
-  const [projects, setProjects] = useState([]);
   const [selectedProject, setSelectedProject] = useState("");
-  const { activeProject } = useCase();
+  const { activeProject, projects } = useCase();
 
-  // Fetch projects for dropdown
+  // Default to activeProject or first user project
   useEffect(() => {
-    listProjects().then(p => {
-      setProjects(p);
-      // Default to activeProject if set, otherwise first project
-      if (activeProject) {
-        setSelectedProject(activeProject);
-      } else if (p.length > 0) {
-        setSelectedProject(p[0].project_id);
-      }
-    }).catch(() => {});
-  }, [activeProject]);
+    if (activeProject) {
+      setSelectedProject(activeProject);
+    } else if (projects.length > 0) {
+      setSelectedProject(projects[0].project_id);
+    }
+  }, [activeProject, projects]);
 
   // Fetch anomalies when project changes
   const fetchAnomalies = async (pid) => {

@@ -5,7 +5,7 @@ import {
   AlertTriangle, FileWarning, EyeOff, Fingerprint, DollarSign, PenTool,
   Filter
 } from "lucide-react";
-import { getRiskIntel, listProjects } from "@/lib/api";
+import { getRiskIntel } from "@/lib/api";
 import { useCase } from "@/contexts/CaseContext";
 
 const categoryConfig = {
@@ -46,21 +46,17 @@ export default function RiskIntelPage() {
   const [riskData, setRiskData] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
-  const [projects, setProjects] = useState([]);
   const [selectedProject, setSelectedProject] = useState("");
-  const { activeProject } = useCase();
+  const { activeProject, projects } = useCase();
 
-  // Fetch projects
+  // Default to activeProject or first user project
   useEffect(() => {
-    listProjects().then(p => {
-      setProjects(p);
-      if (activeProject) {
-        setSelectedProject(activeProject);
-      } else if (p.length > 0) {
-        setSelectedProject(p[0].project_id);
-      }
-    }).catch(() => {});
-  }, [activeProject]);
+    if (activeProject) {
+      setSelectedProject(activeProject);
+    } else if (projects.length > 0) {
+      setSelectedProject(projects[0].project_id);
+    }
+  }, [activeProject, projects]);
 
   // Fetch risk intel when project changes
   useEffect(() => {

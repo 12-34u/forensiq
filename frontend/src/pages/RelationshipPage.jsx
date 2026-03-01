@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo, useCallback } from "react";
 import { motion } from "framer-motion";
 import { ZoomIn, ZoomOut, Eye, Users, Loader2, RefreshCw, Search } from "lucide-react";
-import { graphFull, graphProject, graphSearch, listProjects } from "@/lib/api";
+import { graphFull, graphProject, graphSearch } from "@/lib/api";
 import { useCase } from "@/contexts/CaseContext";
 
 // Color nodes by their Neo4j label
@@ -108,13 +108,7 @@ export default function RelationshipPage() {
   const [searchTerm, setSearchTerm] = useState("");
   const [activeSearch, setActiveSearch] = useState(""); // tracks last executed search
   const [projectFilter, setProjectFilter] = useState("_init_"); // sentinel – will be set from activeProject
-  const [projects, setProjects] = useState([]);
-  const { activeProject } = useCase();
-
-  // Fetch projects for filter dropdown
-  useEffect(() => {
-    listProjects().then(setProjects).catch(() => {});
-  }, []);
+  const { activeProject, projects } = useCase();
 
   // Auto-select project filter from activeProject context (only on initial load)
   useEffect(() => {
@@ -196,10 +190,29 @@ export default function RelationshipPage() {
     }
   };
 
+  // Deduplicate nodes & edges so React keys are unique
+  const dedupedData = useMemo(() => {
+    const seenNodes = new Set();
+    const nodes = (graphData.nodes || []).filter(n => {
+      if (seenNodes.has(n.id)) return false;
+      seenNodes.add(n.id);
+      return true;
+    });
+    const edgeKey = (e) => `${e.source}|${e.target}|${e.type}`;
+    const seenEdges = new Set();
+    const edges = (graphData.edges || []).filter(e => {
+      const k = edgeKey(e);
+      if (seenEdges.has(k)) return false;
+      seenEdges.add(k);
+      return true;
+    });
+    return { nodes, edges };
+  }, [graphData]);
+
   // Compute layout
   const layout = useMemo(
-    () => computeLayout(graphData.nodes || [], graphData.edges || []),
-    [graphData]
+    () => computeLayout(dedupedData.nodes, dedupedData.edges),
+    [dedupedData]
   );
   const posMap = useMemo(
     () => Object.fromEntries(layout.map(p => [p.id, p])),
@@ -212,11 +225,11 @@ export default function RelationshipPage() {
     return p.name || p.number || p.address || p.app_name || p.url || p.page_id?.slice(0, 8) || node.label;
   };
 
-  const selectedEntity = graphData.nodes.find(n => n.id === selectedNode);
-  const connectedEdges = graphData.edges.filter(e => e.source === selectedNode || e.target === selectedNode);
+  const selectedEntity = dedupedData.nodes.find(n => n.id === selectedNode);
+  const connectedEdges = dedupedData.edges.filter(e => e.source === selectedNode || e.target === selectedNode);
 
   // Unique labels for legend
-  const uniqueLabels = [...new Set(graphData.nodes.map(n => n.label))];
+  const uniqueLabels = [...new Set(dedupedData.nodes.map(n => n.label))];
 
   return (
     <div className="flex h-full">
@@ -226,7 +239,7 @@ export default function RelationshipPage() {
           <div>
             <h2 className="text-lg font-bold text-foreground">Dynamic Relationship & Entity Map</h2>
             <p className="text-xs text-muted-foreground">
-              {graphData.node_count ?? graphData.nodes.length} entities — {graphData.edge_count ?? graphData.edges.length} connections
+              {graphData.node_count ?? dedupedData.nodes.length} entities — {graphData.edge_count ?? dedupedData.edges.length} connections
               {loading && " (loading…)"}
             </p>
           </div>
@@ -290,7 +303,7 @@ export default function RelationshipPage() {
             </div>
           ) : error ? (
             <div className="flex h-full items-center justify-center text-sm text-destructive">{error}</div>
-          ) : graphData.nodes.length === 0 ? (
+          ) : dedupedData.nodes.length === 0 ? (
             <div className="flex h-full flex-col items-center justify-center text-muted-foreground">
               <Users className="h-10 w-10 mb-3 opacity-30" />
               <p className="text-sm">No graph data available</p>
@@ -305,7 +318,7 @@ export default function RelationshipPage() {
               style={{ transform: `scale(${zoom})`, transformOrigin: "center" }}
             >
               {/* Edges */}
-              {graphData.edges.map((edge, i) => {
+              {dedupedData.edges.map((edge, i) => {
                 const src = posMap[edge.source];
                 const tgt = posMap[edge.target];
                 if (!src || !tgt) return null;
@@ -334,7 +347,7 @@ export default function RelationshipPage() {
               })}
 
               {/* Nodes */}
-              {graphData.nodes.map(node => {
+              {dedupedData.nodes.map(node => {
                 const pos = posMap[node.id];
                 if (!pos) return null;
                 const styles = labelStyles[node.label] || defaultStyle;
@@ -417,7 +430,7 @@ export default function RelationshipPage() {
                 <div className="space-y-1.5">
                   {connectedEdges.map((edge, i) => {
                     const otherNodeId = edge.source === selectedNode ? edge.target : edge.source;
-                    const other = graphData.nodes.find(n => n.id === otherNodeId);
+                    const other = dedupedData.nodes.find(n => n.id === otherNodeId);
                     return (
                       <div key={i} className="flex items-center justify-between rounded-md bg-muted px-2.5 py-1.5">
                         <span className="text-xs text-foreground">{other ? getNodeName(other) : "?"}</span>

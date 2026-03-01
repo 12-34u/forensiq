@@ -8,10 +8,11 @@ import zipfile
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, File, HTTPException, Query, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile
 from pydantic import BaseModel
 
 from config.settings import settings
+from forensiq.auth.deps import get_current_user, check_rate_limit
 from forensiq.gdrive import GDriveClient
 from forensiq.orchestrator.pipeline import ForensIQPipeline
 
@@ -140,6 +141,7 @@ class ProjectSummary(BaseModel):
 async def ingest_upload(
     file: UploadFile = File(...),
     skip_graph: bool = Query(False, description="Skip Neo4j graph population"),
+    current_user: dict = Depends(get_current_user),
 ):
     """Upload a ``.ufdr`` or ``.clbe`` file and run the full ingest pipeline.
 
@@ -209,6 +211,13 @@ async def ingest_upload(
                    + ("; ".join(result.errors) if result.errors else ""),
         )
 
+    # Link project to the uploading user
+    try:
+        from forensiq.auth.mongo import link_project
+        await link_project(user_id=current_user["sub"], project_id=result.extraction_id)
+    except Exception as exc:
+        logger.warning("Failed to link project to user: %s", exc)
+
     return IngestResponse(
         extraction_id=result.extraction_id,
         source_path=result.source_path,
@@ -225,6 +234,7 @@ async def ingest_upload(
 async def ingest_path(
     path: str = Query(..., description="Local path to a .ufdr/.clbe file or extracted dir"),
     skip_graph: bool = Query(False),
+    current_user: dict = Depends(get_current_user),
 ):
     """Ingest a Cellebrite source already on disk."""
     p = Path(path)
@@ -233,6 +243,14 @@ async def ingest_path(
 
     pipeline = _get_pipeline()
     result = pipeline.ingest(p, skip_graph=skip_graph)
+
+    # Link project to the uploading user
+    try:
+        from forensiq.auth.mongo import link_project
+        await link_project(user_id=current_user["sub"], project_id=result.extraction_id)
+    except Exception as exc:
+        logger.warning("Failed to link project to user: %s", exc)
+
     return IngestResponse(
         extraction_id=result.extraction_id,
         source_path=result.source_path,
@@ -250,7 +268,7 @@ async def ingest_path(
 # ════════════════════════════════════════════════════════
 
 @router.post("/query", response_model=QueryResponse, tags=["Query"])
-async def query(req: QueryRequest):
+async def query(req: QueryRequest, _user: dict = Depends(get_current_user)):
     """Full query pipeline: cache check → RAG retrieval → LLM generation → cache store.
 
     - **skip_cache**: bypass Redis and always run fresh RAG + Gemini.
@@ -280,7 +298,7 @@ async def query(req: QueryRequest):
 # ════════════════════════════════════════════════════════
 
 @router.get("/pages/{extraction_id}", response_model=list[PageOut], tags=["Pages"])
-async def list_pages(extraction_id: str):
+async def list_pages(extraction_id: str, _user: dict = Depends(get_current_user)):
     """List all pages for a given extraction."""
     pipeline = _get_pipeline()
     pages = pipeline.get_pages(extraction_id)
@@ -319,7 +337,7 @@ class GDriveBatchIngestResponse(BaseModel):
 
 
 @router.get("/gdrive/auth", tags=["Google Drive"])
-async def gdrive_auth():
+async def gdrive_auth(_user: dict = Depends(get_current_user)):
     """Trigger OAuth2 authentication with Google Drive.
     On first call this opens a browser window for consent.
     """
@@ -332,7 +350,7 @@ async def gdrive_auth():
 
 
 @router.get("/gdrive/list/{folder_id}", response_model=GDriveListResponse, tags=["Google Drive"])
-async def gdrive_list(folder_id: str):
+async def gdrive_list(folder_id: str, _user: dict = Depends(get_current_user)):
     """List .clbe files inside a Google Drive folder."""
     try:
         client = _get_gdrive()
@@ -346,6 +364,7 @@ async def gdrive_list(folder_id: str):
 async def gdrive_ingest(
     folder_id: str,
     skip_graph: bool = Query(False, description="Skip Neo4j graph population"),
+    _user: dict = Depends(get_current_user),
 ):
     """Download all .clbe files from a Drive folder and ingest them.
 
@@ -399,6 +418,7 @@ async def gdrive_ingest_single(
     file_id: str = Query(..., description="Google Drive file ID of a .clbe file"),
     filename: str = Query("download.clbe", description="Filename to save as"),
     skip_graph: bool = Query(False),
+    _user: dict = Depends(get_current_user),
 ):
     """Download and ingest a single .clbe file from Google Drive."""
     client = _get_gdrive()
@@ -469,29 +489,33 @@ def _neo4j_graph_to_json(records, with_rels: bool = True) -> tuple[list[GraphNod
 async def graph_full(
     limit: int = Query(500, description="Max number of relationships to return"),
     project_id: str = Query(None, description="Filter to a specific project (extraction_id)"),
+    current_user: dict = Depends(get_current_user),
 ):
-    """Return the full knowledge graph as nodes + edges JSON.
+    """Return the knowledge graph scoped to the current user's projects.
 
-    Pass ``project_id`` to see only one project/device — omit it for everything.
+    Pass ``project_id`` to see only one project/device — omit it for all
+    of the user's projects.
     Plug this directly into **vis.js**, **Cytoscape.js**, **D3**, **React Flow**, etc.
     """
+    from forensiq.auth.mongo import get_user_project_ids
+
     try:
-        client = _get_neo4j()
+        # Determine which project IDs to include
         if project_id:
-            results = client._driver.execute_query(
-                "MATCH (n)-[r]->(m) "
-                "WHERE (n.project_id = $pid OR labels(n) = ['Project'] AND n.project_id = $pid) "
-                "AND   (m.project_id = $pid OR labels(m) = ['Project'] AND m.project_id = $pid) "
-                "RETURN n, r, m LIMIT $limit",
-                pid=project_id, limit=limit,
-                database_=client._database,
-            )
+            pids = [project_id]
         else:
-            results = client._driver.execute_query(
-                "MATCH (n)-[r]->(m) RETURN n, r, m LIMIT $limit",
-                limit=limit,
-                database_=client._database,
-            )
+            pids = await get_user_project_ids(current_user["sub"])
+            if not pids:
+                return GraphResponse(nodes=[], edges=[], node_count=0, edge_count=0)
+
+        client = _get_neo4j()
+        results = client._driver.execute_query(
+            "MATCH (n)-[r]->(m) "
+            "WHERE n.project_id IN $pids AND m.project_id IN $pids "
+            "RETURN n, r, m LIMIT $limit",
+            pids=pids, limit=limit,
+            database_=client._database,
+        )
         nodes, edges = _neo4j_graph_to_json([dict(rec) for rec in results.records])
         client.close()
         return GraphResponse(nodes=nodes, edges=edges, node_count=len(nodes), edge_count=len(edges))
@@ -504,8 +528,11 @@ async def graph_by_entity(
     label: str,
     depth: int = Query(1, ge=1, le=5, description="Hops from matching nodes"),
     limit: int = Query(200, description="Max relationships"),
+    current_user: dict = Depends(get_current_user),
 ):
-    """Get subgraph around all nodes of a given label (Person, App, PhoneNumber, etc.)."""
+    """Get subgraph around all nodes of a given label, scoped to user's projects."""
+    from forensiq.auth.mongo import get_user_project_ids
+
     allowed = {
         "Project", "Person", "PhoneNumber", "EmailAddress", "Device", "App",
         "Account", "Location", "URL", "Page", "Organization", "File",
@@ -513,20 +540,25 @@ async def graph_by_entity(
     if label not in allowed:
         raise HTTPException(status_code=400, detail=f"Invalid label. Choose from: {sorted(allowed)}")
     try:
+        pids = await get_user_project_ids(current_user["sub"])
+        if not pids:
+            return GraphResponse(nodes=[], edges=[], node_count=0, edge_count=0)
+
         client = _get_neo4j()
         results = client._driver.execute_query(
             f"MATCH (n:{label})-[r]-(m) "
+            f"WHERE n.project_id IN $pids AND m.project_id IN $pids "
             f"RETURN n, r, m LIMIT $limit",
-            limit=limit,
+            pids=pids, limit=limit,
             database_=client._database,
         )
         nodes, edges = _neo4j_graph_to_json([dict(rec) for rec in results.records])
         if depth > 1:
-            # Fetch further hops
             results2 = client._driver.execute_query(
                 f"MATCH (n:{label})-[*1..{depth}]-(hop)-[r2]-(m2) "
+                f"WHERE n.project_id IN $pids "
                 f"RETURN hop AS n, r2 AS r, m2 AS m LIMIT $limit",
-                limit=limit,
+                pids=pids, limit=limit,
                 database_=client._database,
             )
             nodes2, edges2 = _neo4j_graph_to_json([dict(rec) for rec in results2.records])
@@ -545,27 +577,36 @@ async def graph_by_entity(
 async def graph_search(
     name: str,
     depth: int = Query(2, ge=1, le=5, description="Hops from matching node"),
+    current_user: dict = Depends(get_current_user),
 ):
-    """Search for a person/entity by name and return their subgraph.
+    """Search for a person/entity by name, scoped to the user's projects.
 
     Example: ``/api/v1/graph/search/Vikram?depth=2``
     """
+    from forensiq.auth.mongo import get_user_project_ids
+
     try:
+        pids = await get_user_project_ids(current_user["sub"])
+        if not pids:
+            return GraphResponse(nodes=[], edges=[], node_count=0, edge_count=0)
+
         client = _get_neo4j()
         results = client._driver.execute_query(
             "MATCH (n)-[r]-(m) "
-            "WHERE any(prop IN keys(n) WHERE toLower(toString(n[prop])) CONTAINS toLower($name)) "
+            "WHERE n.project_id IN $pids "
+            "AND any(prop IN keys(n) WHERE toLower(toString(n[prop])) CONTAINS toLower($name)) "
             "RETURN n, r, m LIMIT 300",
-            name=name,
+            name=name, pids=pids,
             database_=client._database,
         )
         nodes, edges = _neo4j_graph_to_json([dict(rec) for rec in results.records])
         if depth > 1:
             results2 = client._driver.execute_query(
                 "MATCH (seed)-[*1..{depth}]-(hop)-[r2]-(m2) "
-                "WHERE any(prop IN keys(seed) WHERE toLower(toString(seed[prop])) CONTAINS toLower($name)) "
+                "WHERE seed.project_id IN $pids "
+                "AND any(prop IN keys(seed) WHERE toLower(toString(seed[prop])) CONTAINS toLower($name)) "
                 "RETURN hop AS n, r2 AS r, m2 AS m LIMIT 300".replace("{depth}", str(depth)),
-                name=name,
+                name=name, pids=pids,
                 database_=client._database,
             )
             nodes2, edges2 = _neo4j_graph_to_json([dict(rec) for rec in results2.records])
@@ -580,8 +621,77 @@ async def graph_search(
 
 # ── Project management ────────────────────────────────
 
+@router.get("/graph/my-projects", response_model=list[ProjectSummary], tags=["Graph"])
+async def list_my_projects(current_user: dict = Depends(get_current_user)):
+    """List projects uploaded by the current user.
+
+    Automatically claims orphan projects (present in Neo4j but not linked
+    to any user) so that legacy/pre-linking uploads still appear.
+    """
+    from forensiq.auth.mongo import (
+        get_user_project_ids,
+        get_all_claimed_project_ids,
+        bulk_link_projects,
+    )
+
+    user_id = current_user["sub"]
+
+    # ── Auto-claim orphan projects ────────────────────
+    try:
+        client = _get_neo4j()
+        all_neo4j = client.run_read(
+            "MATCH (pr:Project) RETURN pr.project_id AS pid"
+        )
+        client.close()
+        all_neo4j_ids = {r["pid"] for r in all_neo4j if r["pid"]}
+    except Exception:
+        all_neo4j_ids = set()
+
+    if all_neo4j_ids:
+        claimed = await get_all_claimed_project_ids()
+        orphans = list(all_neo4j_ids - claimed)
+        if orphans:
+            await bulk_link_projects(user_id=user_id, project_ids=orphans)
+
+    owned_ids = await get_user_project_ids(user_id)
+
+    if not owned_ids:
+        return []
+
+    try:
+        client = _get_neo4j()
+        rows = client.run_read(
+            "MATCH (pr:Project) "
+            "WHERE pr.project_id IN $pids "
+            "OPTIONAL MATCH (n)-[:PART_OF]->(pr) "
+            "WHERE NOT 'Page' IN labels(n) "
+            "RETURN pr.project_id AS project_id, "
+            "       pr.name AS name, "
+            "       pr.extraction_id AS extraction_id, "
+            "       pr.page_count AS page_count, "
+            "       pr.created_at AS created_at, "
+            "       count(n) AS node_count "
+            "ORDER BY pr.created_at DESC",
+            pids=owned_ids,
+        )
+        client.close()
+        return [
+            ProjectSummary(
+                project_id=r["project_id"],
+                name=r.get("name") or r["project_id"],
+                extraction_id=r.get("extraction_id") or r["project_id"],
+                page_count=r.get("page_count") or 0,
+                node_count=r.get("node_count") or 0,
+                created_at=r.get("created_at") or "",
+            )
+            for r in rows
+        ]
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Failed to list projects: {exc}")
+
+
 @router.get("/graph/projects", response_model=list[ProjectSummary], tags=["Graph"])
-async def list_projects():
+async def list_projects(_user: dict = Depends(get_current_user)):
     """List all projects (device extractions) in the graph.
 
     Each project groups the nodes from one .clbe/.ufdr ingestion.
@@ -620,6 +730,7 @@ async def list_projects():
 async def graph_project(
     project_id: str,
     limit: int = Query(500, description="Max relationships"),
+    _user: dict = Depends(get_current_user),
 ):
     """Return the subgraph for a **single project** (device extraction).
 
@@ -660,7 +771,7 @@ async def graph_project(
 
 
 @router.delete("/graph/project/{project_id}", tags=["Graph"])
-async def delete_project(project_id: str):
+async def delete_project(project_id: str, _user: dict = Depends(get_current_user)):
     """Delete all graph data belonging to a specific project.
 
     This removes the Project node and all nodes/relationships tagged
@@ -686,7 +797,7 @@ async def delete_project(project_id: str):
 
 
 @router.get("/graph/export", response_model=GraphExportResponse, tags=["Graph"])
-async def graph_export():
+async def graph_export(_user: dict = Depends(get_current_user)):
     """Export the entire graph as a JSON snapshot you can store in your own DB.
 
     Returns all nodes and edges with full properties — save this as-is into
@@ -726,7 +837,7 @@ async def graph_export():
 # ════════════════════════════════════════════════════════
 
 @router.get("/stats", response_model=StatsResponse, tags=["Stats"])
-async def stats():
+async def stats(_user: dict = Depends(get_current_user)):
     """Return high-level system statistics."""
     pipeline = _get_pipeline()
     resp = StatsResponse(
@@ -746,14 +857,14 @@ async def stats():
 # ════════════════════════════════════════════════════════
 
 @router.get("/cache/stats", tags=["Cache"])
-async def cache_stats():
+async def cache_stats(_user: dict = Depends(get_current_user)):
     """Return Redis cache statistics (backend, entry count, TTL)."""
     pipeline = _get_pipeline()
     return pipeline.cache_stats()
 
 
 @router.delete("/cache/flush", tags=["Cache"])
-async def cache_flush():
+async def cache_flush(_user: dict = Depends(get_current_user)):
     """Clear all cached query responses."""
     pipeline = _get_pipeline()
     pipeline._cache.flush_all()
@@ -761,7 +872,7 @@ async def cache_flush():
 
 
 @router.delete("/cache/invalidate", tags=["Cache"])
-async def cache_invalidate(prompt: str = Query(..., description="The prompt to invalidate")):
+async def cache_invalidate(prompt: str = Query(..., description="The prompt to invalidate"), _user: dict = Depends(get_current_user)):
     """Remove a specific cached response by prompt."""
     pipeline = _get_pipeline()
     removed = pipeline._cache.invalidate(prompt)
@@ -773,7 +884,7 @@ async def cache_invalidate(prompt: str = Query(..., description="The prompt to i
 # ════════════════════════════════════════════════════════
 
 @router.get("/llm/status", tags=["LLM"])
-async def llm_status():
+async def llm_status(_user: dict = Depends(get_current_user)):
     """Return which LLM backends (Gemini, OpenRouter) are available."""
     pipeline = _get_pipeline()
     return pipeline.llm_status()
@@ -828,7 +939,7 @@ class RiskIntelResponse(BaseModel):
 
 
 @router.get("/riskintel/{project_id}", response_model=RiskIntelResponse, tags=["Risk Intel"])
-async def risk_intel(project_id: str):
+async def risk_intel(project_id: str, _user: dict = Depends(get_current_user)):
     """Run rule-based risk intelligence detection on a project's page data.
 
     Scans all pages for indicators of counter-intelligence, evidence fabrication,
@@ -908,7 +1019,7 @@ async def risk_intel(project_id: str):
 
 
 @router.get("/anomalies/{project_id}", response_model=AnomalyResponse, tags=["Anomalies"])
-async def detect_anomalies(project_id: str):
+async def detect_anomalies(project_id: str, _user: dict = Depends(get_current_user)):
     """Run LLM-powered anomaly detection on a project's graph data.
 
     Analyzes entity relationships, communication patterns, and metadata
@@ -1083,21 +1194,31 @@ class AuthResponse(BaseModel):
 
 
 @router.post("/auth/signup", response_model=AuthResponse, tags=["Auth"])
-async def auth_signup(req: SignupRequest):
+async def auth_signup(req: SignupRequest, request: Request):
     """Register a new user account.
 
     Stores credentials in MongoDB Atlas with bcrypt-hashed password.
     Returns user session data + JWT token.
     """
     from forensiq.auth.mongo import signup, ensure_indexes
+    import re
+
+    # Rate limit signup attempts
+    check_rate_limit(request, max_attempts=10, window=600)
 
     # Validation
     if not req.name or len(req.name.strip()) < 2:
         raise HTTPException(status_code=400, detail="Name must be at least 2 characters")
     if not req.email or "@" not in req.email:
         raise HTTPException(status_code=400, detail="Invalid email address")
-    if not req.password or len(req.password) < 6:
-        raise HTTPException(status_code=400, detail="Password must be at least 6 characters")
+    if not req.password or len(req.password) < 8:
+        raise HTTPException(status_code=400, detail="Password must be at least 8 characters")
+    if not re.search(r'[A-Z]', req.password):
+        raise HTTPException(status_code=400, detail="Password must contain at least one uppercase letter")
+    if not re.search(r'[a-z]', req.password):
+        raise HTTPException(status_code=400, detail="Password must contain at least one lowercase letter")
+    if not re.search(r'[0-9]', req.password):
+        raise HTTPException(status_code=400, detail="Password must contain at least one number")
 
     await ensure_indexes()
     try:
@@ -1119,7 +1240,7 @@ async def auth_signup(req: SignupRequest):
 
 
 @router.post("/auth/login", response_model=AuthResponse, tags=["Auth"])
-async def auth_login(req: LoginRequest):
+async def auth_login(req: LoginRequest, request: Request):
     """Authenticate with email + password.
 
     Verifies credentials against MongoDB Atlas.
@@ -1127,12 +1248,79 @@ async def auth_login(req: LoginRequest):
     """
     from forensiq.auth.mongo import login
 
-    user = await login(email=req.email, password=req.password)
+    # Rate limit login attempts: 5 per 5 minutes per IP
+    check_rate_limit(request, max_attempts=5, window=300)
+
+    try:
+        user = await login(email=req.email, password=req.password)
+    except Exception as exc:
+        logger.error("Login failed unexpectedly: %s", exc, exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Login error: {exc}")
+
     if not user:
         raise HTTPException(status_code=401, detail="Invalid email or password")
 
     token = _create_jwt(user)
     return AuthResponse(user=user, token=token)
+
+
+# ── Forgot / Reset Password ────────────────────────────
+
+class ForgotPasswordRequest(BaseModel):
+    email: str
+
+
+class ResetPasswordRequest(BaseModel):
+    token: str
+    new_password: str
+
+
+@router.post("/auth/forgot-password", tags=["Auth"])
+async def auth_forgot_password(req: ForgotPasswordRequest, request: Request):
+    """Request a password reset token for the given email.
+
+    In production this would send an email; for now the token is returned
+    in the response so the frontend can proceed to the reset page.
+    """
+    from forensiq.auth.mongo import create_password_reset
+
+    check_rate_limit(request, max_attempts=5, window=600)
+
+    token = await create_password_reset(req.email)
+
+    # Always return 200 to avoid email enumeration
+    if not token:
+        return {"message": "If an account with that email exists, a reset link has been generated.", "token": None}
+
+    return {
+        "message": "If an account with that email exists, a reset link has been generated.",
+        "token": token,
+    }
+
+
+@router.post("/auth/reset-password", tags=["Auth"])
+async def auth_reset_password(req: ResetPasswordRequest, request: Request):
+    """Reset password using a reset token."""
+    from forensiq.auth.mongo import reset_password
+    import re
+
+    check_rate_limit(request, max_attempts=5, window=300)
+
+    # Password validation
+    if not req.new_password or len(req.new_password) < 8:
+        raise HTTPException(status_code=400, detail="Password must be at least 8 characters")
+    if not re.search(r'[A-Z]', req.new_password):
+        raise HTTPException(status_code=400, detail="Password must contain at least one uppercase letter")
+    if not re.search(r'[a-z]', req.new_password):
+        raise HTTPException(status_code=400, detail="Password must contain at least one lowercase letter")
+    if not re.search(r'[0-9]', req.new_password):
+        raise HTTPException(status_code=400, detail="Password must contain at least one number")
+
+    success = await reset_password(req.token, req.new_password)
+    if not success:
+        raise HTTPException(status_code=400, detail="Invalid or expired reset token")
+
+    return {"message": "Password has been reset successfully. You can now log in."}
 
 
 def _create_jwt(user: dict) -> str:
@@ -1148,3 +1336,124 @@ def _create_jwt(user: dict) -> str:
         "iat": datetime.now(timezone.utc),
     }
     return jwt.encode(payload, settings.jwt_secret, algorithm=settings.jwt_algorithm)
+
+
+# ════════════════════════════════════════════════════════
+#  Conversations (per-user chat history)
+# ════════════════════════════════════════════════════════
+
+class ConversationOut(BaseModel):
+    id: str
+    user_id: str
+    title: str
+    created_at: str
+    updated_at: str
+    message_count: int = 0
+
+
+class ConversationDetail(BaseModel):
+    id: str
+    user_id: str
+    title: str
+    messages: list[dict[str, Any]]
+    created_at: str
+    updated_at: str
+
+
+class CreateConversationRequest(BaseModel):
+    title: str = "New Conversation"
+
+
+class AppendMessageRequest(BaseModel):
+    message: dict[str, Any]
+
+
+class RenameConversationRequest(BaseModel):
+    title: str
+
+
+@router.post("/conversations", response_model=ConversationDetail, tags=["Conversations"])
+async def create_conversation(
+    req: CreateConversationRequest,
+    current_user: dict = Depends(get_current_user),
+):
+    """Create a new conversation for the authenticated user."""
+    from forensiq.auth.conversations import create_conversation as _create
+
+    conv = await _create(user_id=current_user["sub"], title=req.title)
+    return ConversationDetail(**conv)
+
+
+@router.get("/conversations", response_model=list[ConversationOut], tags=["Conversations"])
+async def list_conversations(current_user: dict = Depends(get_current_user)):
+    """List all conversations for the authenticated user (newest first)."""
+    from forensiq.auth.conversations import list_conversations as _list
+
+    convs = await _list(user_id=current_user["sub"])
+    return [ConversationOut(**c) for c in convs]
+
+
+@router.get("/conversations/{conversation_id}", response_model=ConversationDetail, tags=["Conversations"])
+async def get_conversation(
+    conversation_id: str,
+    current_user: dict = Depends(get_current_user),
+):
+    """Get a conversation with full message history. Only accessible by the owner."""
+    from forensiq.auth.conversations import get_conversation as _get
+
+    conv = await _get(conversation_id=conversation_id, user_id=current_user["sub"])
+    if conv is None:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    return ConversationDetail(**conv)
+
+
+@router.post("/conversations/{conversation_id}/messages", tags=["Conversations"])
+async def append_message(
+    conversation_id: str,
+    req: AppendMessageRequest,
+    current_user: dict = Depends(get_current_user),
+):
+    """Append a message to a conversation. Only the owner can add messages."""
+    from forensiq.auth.conversations import append_message as _append
+
+    ok = await _append(
+        conversation_id=conversation_id,
+        user_id=current_user["sub"],
+        message=req.message,
+    )
+    if not ok:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    return {"status": "ok"}
+
+
+@router.patch("/conversations/{conversation_id}", tags=["Conversations"])
+async def rename_conversation(
+    conversation_id: str,
+    req: RenameConversationRequest,
+    current_user: dict = Depends(get_current_user),
+):
+    """Rename a conversation. Only the owner can rename."""
+    from forensiq.auth.conversations import update_title
+
+    ok = await update_title(
+        conversation_id=conversation_id,
+        user_id=current_user["sub"],
+        title=req.title,
+    )
+    if not ok:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    return {"status": "ok"}
+
+
+@router.delete("/conversations/{conversation_id}", tags=["Conversations"])
+async def delete_conversation(
+    conversation_id: str,
+    current_user: dict = Depends(get_current_user),
+):
+    """Delete a conversation. Only the owner can delete."""
+    from forensiq.auth.conversations import delete_conversation as _delete
+
+    ok = await _delete(conversation_id=conversation_id, user_id=current_user["sub"])
+    if not ok:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    return {"status": "ok"}

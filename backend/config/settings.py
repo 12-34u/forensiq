@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import secrets
 from pathlib import Path
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -66,9 +67,19 @@ class Settings(BaseSettings):
     mongodb_database: str = "forensiq"
 
     # ── JWT ──────────────────────────────────────────────
-    jwt_secret: str = "forensiq-jwt-secret-change-in-production"
+    jwt_secret: str = ""           # MUST be set in .env for production
     jwt_algorithm: str = "HS256"
-    jwt_expire_hours: int = 72
+    jwt_expire_hours: int = 24     # reduced from 72h for security
 
 
 settings = Settings()
+
+# ── Runtime safety check: JWT secret ────────────────────
+if not settings.jwt_secret:
+    import logging as _logging
+    _logging.getLogger("config").warning(
+        "JWT_SECRET is not set! Generating a random ephemeral secret. "
+        "Sessions will NOT survive server restarts. "
+        "Set JWT_SECRET in your .env file for production."
+    )
+    settings.jwt_secret = secrets.token_urlsafe(64)

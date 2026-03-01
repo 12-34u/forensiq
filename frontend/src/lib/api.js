@@ -5,11 +5,25 @@
 
 const API_ORIGIN = import.meta.env.VITE_API_URL || "";
 const BASE = `${API_ORIGIN}/api/v1`;
+const TOKEN_KEY = "forensiq_token";
+
+/** Get the stored JWT token (if any). */
+function getToken() {
+  try { return localStorage.getItem(TOKEN_KEY); } catch { return null; }
+}
 
 async function request(path, options = {}) {
   const url = `${BASE}${path}`;
+  const headers = { "Content-Type": "application/json", ...options.headers };
+
+  // Attach JWT token if available
+  const token = getToken();
+  if (token) {
+    headers["Authorization"] = `Bearer ${token}`;
+  }
+
   const res = await fetch(url, {
-    headers: { "Content-Type": "application/json", ...options.headers },
+    headers,
     ...options,
   });
   if (!res.ok) {
@@ -26,8 +40,15 @@ export async function ingestUpload(file, { skipGraph = false } = {}) {
   const form = new FormData();
   form.append("file", file);
   const qs = skipGraph ? "?skip_graph=true" : "";
+
+  // Build headers with auth token (no Content-Type — browser sets multipart boundary)
+  const headers = {};
+  const token = getToken();
+  if (token) headers["Authorization"] = `Bearer ${token}`;
+
   const res = await fetch(`${BASE}/ingest/upload${qs}`, {
     method: "POST",
+    headers,
     body: form,
   });
   if (!res.ok) {
@@ -89,6 +110,11 @@ export function graphExport() {
 }
 
 // ── Projects ────────────────────────────────────────
+
+/** List only projects uploaded by the current user. */
+export function listMyProjects() {
+  return request("/graph/my-projects");
+}
 
 export function listProjects() {
   return request("/graph/projects");
@@ -157,4 +183,61 @@ export async function authLogin({ email, password }) {
     method: "POST",
     body: JSON.stringify({ email, password }),
   });
+}
+
+/** Request a password reset token. */
+export async function authForgotPassword(email) {
+  return request("/auth/forgot-password", {
+    method: "POST",
+    body: JSON.stringify({ email }),
+  });
+}
+
+/** Reset password using a token. */
+export async function authResetPassword(token, newPassword) {
+  return request("/auth/reset-password", {
+    method: "POST",
+    body: JSON.stringify({ token, new_password: newPassword }),
+  });
+}
+
+// ── Conversations (per-user chat history) ────────────────
+
+/** Create a new conversation. */
+export function createConversation(title = "New Conversation") {
+  return request("/conversations", {
+    method: "POST",
+    body: JSON.stringify({ title }),
+  });
+}
+
+/** List all conversations for the current user (newest first). */
+export function listConversations() {
+  return request("/conversations");
+}
+
+/** Get a conversation with full message history. */
+export function getConversation(conversationId) {
+  return request(`/conversations/${conversationId}`);
+}
+
+/** Append a message to a conversation. */
+export function appendMessage(conversationId, message) {
+  return request(`/conversations/${conversationId}/messages`, {
+    method: "POST",
+    body: JSON.stringify({ message }),
+  });
+}
+
+/** Rename a conversation. */
+export function renameConversation(conversationId, title) {
+  return request(`/conversations/${conversationId}`, {
+    method: "PATCH",
+    body: JSON.stringify({ title }),
+  });
+}
+
+/** Delete a conversation. */
+export function deleteConversation(conversationId) {
+  return request(`/conversations/${conversationId}`, { method: "DELETE" });
 }
