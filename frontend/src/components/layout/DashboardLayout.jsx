@@ -8,7 +8,7 @@ const navItems = [
   { path: "/dashboard", label: "NLIQ Chat", icon: Search },
   { path: "/dashboard/relationships", label: "Entity Map", icon: GitBranch },
   { path: "/dashboard/riskintel", label: "Risk Intel", icon: ShieldAlert },
-  { path: "/dashboard/anomalies", label: "Anomalies", icon: AlertTriangle },
+  
 ];
 
 export function DashboardLayout({ children }) {
@@ -42,9 +42,9 @@ export function DashboardLayout({ children }) {
         <div className="border-b border-border px-5 py-3">
           <p className="text-[10px] font-mono uppercase tracking-widest text-muted-foreground">Active Device</p>
           <p className="mt-1 text-xs font-semibold text-foreground truncate">{projectLabel}</p>
-          {stats && (
+          {deviceCount > 0 && (
             <p className="text-[10px] text-muted-foreground">
-              {stats.neo4j_nodes ?? 0} entities • {stats.faiss_vectors ?? 0} vectors
+              {deviceCount} device{deviceCount !== 1 ? "s" : ""} ingested
             </p>
           )}
         </div>

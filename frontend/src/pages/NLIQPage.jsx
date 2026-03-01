@@ -10,8 +10,8 @@ const sourceColors = {
   Telegram: "bg-primary/15 text-primary",
   SMS: "bg-accent/15 text-accent",
   Signal: "bg-chart-5/15 text-chart-5",
-  vector: "bg-primary/15 text-primary",
-  graph: "bg-accent/15 text-accent",
+  evidence: "bg-primary/15 text-primary",
+  entity: "bg-accent/15 text-accent",
 };
 
 const suggestedQueries = [
@@ -89,25 +89,29 @@ export default function NLIQPage() {
     try {
       const result = await apiQuery(text.trim());
 
-      const vectorCitations = (result.vector_hits || []).map((hit, i) => ({
-        id: `v-${i}`,
-        type: "vector",
-        title: hit.title || `Vector Hit #${i + 1}`,
-        body: hit.body || hit.text || "",
-        score: hit.score ?? hit.similarity ?? 0,
-        artifact_type: hit.artifact_type || "",
-        source_section: hit.source_section || "",
-        page_id: hit.page_id || "",
-      }));
+      const vectorCitations = (result.vector_hits || [])
+        .filter(hit => (hit.body || hit.text || "").trim())
+        .map((hit, i) => ({
+          id: `v-${i}`,
+          type: "evidence",
+          title: hit.title || hit.source_section || `Evidence #${i + 1}`,
+          body: hit.body || hit.text || "",
+          score: hit.score ?? hit.similarity ?? 0,
+          artifact_type: hit.artifact_type || "",
+          source_section: hit.source_section || "",
+          page_id: hit.page_id || "",
+        }));
 
-      const graphCitations = (result.graph_context || []).map((ctx, i) => ({
-        id: `g-${i}`,
-        type: "graph",
-        title: ctx.title || ctx.name || `Graph Entity #${i + 1}`,
-        body: ctx.body || ctx.text || JSON.stringify(ctx.properties || ctx, null, 2),
-        label: ctx.label || ctx.type || "",
-        page_id: ctx.page_id || "",
-      }));
+      const graphCitations = (result.graph_context || [])
+        .filter(ctx => (ctx.body || ctx.text || ctx.name || "").trim())
+        .map((ctx, i) => ({
+          id: `g-${i}`,
+          type: "entity",
+          title: ctx.title || ctx.name || `Entity #${i + 1}`,
+          body: ctx.body || ctx.text || JSON.stringify(ctx.properties || ctx, null, 2),
+          label: ctx.label || ctx.type || "",
+          page_id: ctx.page_id || "",
+        }));
 
       const allCitations = [...vectorCitations, ...graphCitations];
 
@@ -363,7 +367,7 @@ export default function NLIQPage() {
                             >
                               <span className="flex h-5 w-5 items-center justify-center rounded bg-primary/10 text-[10px] font-bold text-primary font-mono">{idx + 1}</span>
                               <span className={`rounded px-1.5 py-0.5 text-[9px] font-bold ${sourceColors[cite.type] || "bg-muted text-muted-foreground"}`}>
-                                {cite.type === "vector" ? "VECTOR" : "GRAPH"}
+                                {cite.type === "evidence" ? "EVIDENCE" : "ENTITY"}
                               </span>
                               {cite.artifact_type && (
                                 <span className="rounded bg-secondary px-1.5 py-0.5 text-[9px] font-mono text-secondary-foreground">
