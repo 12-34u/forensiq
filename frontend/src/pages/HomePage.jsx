@@ -1,6 +1,6 @@
 import { useState, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
-import { Upload, Shield, FileText, CheckCircle, Loader2, AlertCircle, LogOut, Sun, Moon, FolderOpen, Clock, AlertTriangle, Users, Database, Cpu } from "lucide-react";
+import { Upload, Shield, FileText, CheckCircle, Loader2, AlertCircle, LogOut, Sun, Moon, FolderOpen, Clock, AlertTriangle, Users, Database } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useAuth } from "@/contexts/AuthContext";
 import { useTheme } from "@/hooks/use-theme";
@@ -104,11 +104,10 @@ export default function HomePage() {
     navigate("/");
   };
 
-  // Compute stats from real data
+  // Compute stats from user's project data
   const totalProjects = projects.length;
-  const totalEntities = stats?.neo4j_nodes ?? 0;
-  const totalRelationships = stats?.neo4j_relationships ?? 0;
-  const totalVectors = stats?.faiss_vectors ?? 0;
+  const totalPages = projects.reduce((sum, p) => sum + (p.page_count || 0), 0);
+  const totalEntities = projects.reduce((sum, p) => sum + (p.node_count || 0), 0);
 
   return (
     <div className="flex h-screen w-screen flex-col overflow-hidden bg-background">
@@ -152,13 +151,12 @@ export default function HomePage() {
             <p className="text-sm text-muted-foreground">{user?.department} • {new Date().toLocaleDateString("en-IN", { weekday: "long", year: "numeric", month: "long", day: "numeric" })}</p>
           </div>
 
-          {/* Stats row - REAL data from backend */}
-          <div className="grid grid-cols-4 gap-4">
+          {/* Stats row */}
+          <div className="grid grid-cols-3 gap-4">
             {[
               { label: "Devices Ingested", value: totalProjects, icon: FolderOpen, color: "text-primary" },
-              { label: "Neo4j Entities", value: totalEntities, icon: Users, color: "text-success" },
-              { label: "Relationships", value: totalRelationships, icon: Database, color: "text-accent" },
-              { label: "FAISS Vectors", value: totalVectors, icon: Cpu, color: "text-chart-5" },
+              { label: "Evidence Pages", value: totalPages, icon: Database, color: "text-success" },
+              { label: "Entities Extracted", value: totalEntities, icon: Users, color: "text-accent" },
             ].map((stat, i) => (
               <motion.div
                 key={i}
