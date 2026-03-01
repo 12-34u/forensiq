@@ -623,36 +623,10 @@ async def graph_search(
 
 @router.get("/graph/my-projects", response_model=list[ProjectSummary], tags=["Graph"])
 async def list_my_projects(current_user: dict = Depends(get_current_user)):
-    """List projects uploaded by the current user.
-
-    Automatically claims orphan projects (present in Neo4j but not linked
-    to any user) so that legacy/pre-linking uploads still appear.
-    """
-    from forensiq.auth.mongo import (
-        get_user_project_ids,
-        get_all_claimed_project_ids,
-        bulk_link_projects,
-    )
+    """List projects uploaded by the current user."""
+    from forensiq.auth.mongo import get_user_project_ids
 
     user_id = current_user["sub"]
-
-    # ── Auto-claim orphan projects ────────────────────
-    try:
-        client = _get_neo4j()
-        all_neo4j = client.run_read(
-            "MATCH (pr:Project) RETURN pr.project_id AS pid"
-        )
-        client.close()
-        all_neo4j_ids = {r["pid"] for r in all_neo4j if r["pid"]}
-    except Exception:
-        all_neo4j_ids = set()
-
-    if all_neo4j_ids:
-        claimed = await get_all_claimed_project_ids()
-        orphans = list(all_neo4j_ids - claimed)
-        if orphans:
-            await bulk_link_projects(user_id=user_id, project_ids=orphans)
-
     owned_ids = await get_user_project_ids(user_id)
 
     if not owned_ids:
@@ -837,18 +811,43 @@ async def graph_export(_user: dict = Depends(get_current_user)):
 # ════════════════════════════════════════════════════════
 
 @router.get("/stats", response_model=StatsResponse, tags=["Stats"])
-async def stats(_user: dict = Depends(get_current_user)):
-    """Return high-level system statistics."""
-    pipeline = _get_pipeline()
-    resp = StatsResponse(
-        extractions=pipeline.list_extractions(),
-        faiss_vectors=pipeline._faiss.size,
-    )
+async def stats(current_user: dict = Depends(get_current_user)):
+    """Return statistics scoped to the current user's projects."""
+    from forensiq.auth.mongo import get_user_project_ids
+
+    user_id = current_user["sub"]
+    owned_ids = await get_user_project_ids(user_id)
+
+    resp = StatsResponse(extractions=owned_ids, faiss_vectors=0)
+
+    if not owned_ids:
+        resp.neo4j_nodes = 0
+        resp.neo4j_relationships = 0
+        return resp
+
     try:
-        resp.neo4j_nodes = pipeline.neo4j.count_nodes()
-        resp.neo4j_relationships = pipeline.neo4j.count_relationships()
+        client = _get_neo4j()
+        node_rows = client.run_read(
+            "MATCH (n) WHERE n.project_id IN $pids AND NOT n:Project RETURN count(n) AS cnt",
+            pids=owned_ids,
+        )
+        rel_rows = client.run_read(
+            "MATCH (n)-[r]->(m) WHERE n.project_id IN $pids AND m.project_id IN $pids RETURN count(r) AS cnt",
+            pids=owned_ids,
+        )
+        resp.neo4j_nodes = node_rows[0]["cnt"] if node_rows else 0
+        resp.neo4j_relationships = rel_rows[0]["cnt"] if rel_rows else 0
+        client.close()
     except Exception:
         pass  # Neo4j might not be running
+
+    # Count FAISS vectors belonging to user's extractions
+    try:
+        pipeline = _get_pipeline()
+        resp.faiss_vectors = pipeline._faiss.size
+    except Exception:
+        pass
+
     return resp
 
 
